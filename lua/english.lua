@@ -3,19 +3,22 @@ local function english()
 	local num_selection, fold_comments, used_punct, wildcard, changing, page_size
 
 	local function init(env)
-		local engine = env.engine
-		local schema = engine.schema
-		local config = schema.config
+	    local engine = env.engine
+	    local schema = engine.schema
+	    local config = schema.config
 
-		page_size = schema.page_size
-		env.kRejected, env.kAccepted, env.kNoop = 0, 1, 2
-		env.kPair = {["Release+Shift_L"]="Shift+Shift_L",["Release+Shift_R"]="Shift+Shift_R",["Lock+Release+Control_L"]="Lock+Control+Control_L",["Lock+Release+Control_R"]="Lock+Control+Control_R",
-				     ["Lock+Release+Shift_L"]="Shift+Lock+Shift_L",["Lock+Release+Shift_R"]="Shift+Lock+Shift_R",["Release+Control_L"]="Control+Control_L",["Release+Control_R"]="Control+Control_R"}
-		wildcard = config:get_string("translator/wildcard")
-		used_punct = config:get_string("translator/used_punct")
-		wildcard = wildcard and wildcard:gsub("[^%p]", ""):sub(1, 2) or ""
-		wildcard = {t = wildcard, m = (wildcard.." "):sub(1, 1), o = wildcard:sub(2, 2), p = "([" .. (wildcard == "" and "%s" or wildcard:gsub("(%p)", "%%%1")) .. "])"}
-		used_punct = used_punct and used_punct:gsub("[^%p]", ""):gsub(wildcard.p, "") or ""
+	    page_size = schema.page_size
+	    env.kRejected, env.kAccepted, env.kNoop = 0, 1, 2
+	    env.kPair = {["Release+Shift_L"]="Shift+Shift_L",["Release+Shift_R"]="Shift+Shift_R",["Lock+Release+Control_L"]="Lock+Control+Control_L",["Lock+Release+Control_R"]="Lock+Control+Control_R",
+	                 ["Lock+Release+Shift_L"]="Shift+Lock+Shift_L",["Lock+Release+Shift_R"]="Shift+Lock+Shift_R",["Release+Control_L"]="Control+Control_L",["Release+Control_R"]="Control+Control_R"}
+	    wildcard = config:get_string("translator/wildcard")
+	    used_punct = config:get_string("translator/used_punct")
+
+	    env.min_trigger_length = config:get_int("translator/min_trigger_length") or 4
+
+	    wildcard = wildcard and wildcard:gsub("[^%p]", ""):sub(1, 2) or ""
+	    wildcard = {t = wildcard, m = (wildcard.." "):sub(1, 1), o = wildcard:sub(2, 2), p = "([" .. (wildcard == "" and "%s" or wildcard:gsub("(%p)", "%%%1")) .. "])"}
+	    used_punct = used_punct and used_punct:gsub("[^%p]", ""):gsub(wildcard.p, "") or ""
 	end
 
 	local function processor(key, env)
@@ -116,26 +119,43 @@ local function english()
 	end
 
 	local function segmentor(segmentation, env)
-		local engine = env.engine
-		local context = engine.context
+	    local engine = env.engine
+	    local context = engine.context
+	
+	    if context:get_option("ascii_mode") and not changing then
+	        local input_text = segmentation.input
+	        local input_len = #input_text
 
-		if context:get_option("ascii_mode") and not changing then
-			preedit.t = segmentation.input
-			preedit.l = preedit.t:lower()
-			preedit.s = preedit.t:len()
-			preedit.a = {{"", string.lower}}
-			preedit.p = "^" .. (preedit.t .. wildcard.m):gsub("(.-(%a?)[^%a]-)" .. wildcard.p,
-									function(a, b, c)
-										if b ~= "" then preedit.a[#preedit.a][2] = b:lower() == b and string.lower or string.upper
-										elseif #preedit.a == 1 then preedit.a[1][1] = preedit.a[1][1] .. a .. c return (a .. c):gsub("(%p)", "%%%1") end
-										preedit.a[#preedit.a][1] = preedit.a[#preedit.a][1] .. a
-										table.insert(preedit.a, {"", preedit.a[#preedit.a][2]})
-										return a:gsub("(%p)", "%%%1") .. (c == wildcard.m and "(.-)" or "(.?)")
-									end):lower() .. "$"
-			preedit.w = #preedit.a > 2
-			segmentation.input = preedit.l
-		end
-		return true
+	        local has_wildcard = false
+	        for i = 1, input_len do
+	            local char = input_text:sub(i, i)
+	            if wildcard.t and wildcard.t:find(char, 1, true) then
+	                has_wildcard = true
+	                break
+	            end
+	        end
+
+	        if not has_wildcard and input_len < env.min_trigger_length then
+	            return false
+	        end
+	        
+	        preedit.t = segmentation.input
+	        preedit.l = preedit.t:lower()
+	        preedit.s = preedit.t:len()
+	        preedit.a = {{"", string.lower}}
+	        preedit.p = "^" .. (preedit.t .. wildcard.m):gsub("(.-(%a?)[^%a]-)" .. wildcard.p,
+	                                function(a, b, c)
+	                                    if b ~= "" then preedit.a[#preedit.a][2] = b:lower() == b and string.lower or string.upper
+	                                    elseif #preedit.a == 1 then preedit.a[1][1] = preedit.a[1][1] .. a .. c return (a .. c):gsub("(%p)", "%%%1") end
+	                                    preedit.a[#preedit.a][1] = preedit.a[#preedit.a][1] .. a
+	                                    table.insert(preedit.a, {"", preedit.a[#preedit.a][2]})
+	                                    return a:gsub("(%p)", "%%%1") .. (c == wildcard.m and "(.-)" or "(.?)")
+	                                end):lower() .. "$"
+	        preedit.w = #preedit.a > 2
+	        segmentation.input = preedit.l
+	        return true
+	    end
+	    return false
 	end
 
 	local function translator(input, seg, env)
